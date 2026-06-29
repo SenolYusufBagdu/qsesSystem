@@ -1,0 +1,29 @@
+{
+  "NQ1!": {
+    "total_trades": 11,
+    "win_rate": 0.3636,
+    "net_profit_pct": -19.5781,
+    "sharpe_ratio": -1.1974,
+    "max_drawdown": -25.6359,
+    "expectancy": -1.7798,
+    "avg_hold_bars": 18.55
+  },
+  "XAUUSD": {
+    "total_trades": 11,
+    "win_rate": 0.0,
+    "net_profit_pct": -61.2028,
+    "sharpe_ratio": -21.3222,
+    "max_drawdown": -46.7337,
+    "expectancy": -5.5639,
+    "avg_hold_bars": 63.0
+  },
+  "SP500": {
+    "total_trades": 9,
+    "win_rate": 0.3333,
+    "net_profit_pct": -5.6899,
+    "sharpe_ratio": -0.692,
+    "max_drawdown": -12.1384,
+    "expectancy": -0.6322,
+    "avg_hold_bars": 14.22
+  }
+}
