@@ -28,137 +28,148 @@ class AlgorithmA(BaseAlgorithm):
     # ── Signal Generation ────────────────────────────────────────────────────
 
     def generate_signals(self, df: pd.DataFrame, params: Dict[str, Any]) -> pd.Series:
+        """
+        Composite signal pipeline: Factor1(Mom) + Factor2(OU) + Factor3(OFI)
+        + Factor4(GARCH regime) -> composite z-score -> entry conditions.
+        """
         p = params
         n = len(df)
         close  = df["close"].values
         high   = df["high"].values
         low    = df["low"].values
         volume = df["volume"].values if "volume" in df.columns else np.ones(n)
-
         lookback = p.get("lookback", 200)
         wf_warm  = p.get("wf_window", 50)
 
-        # ── Factor 1: Momentum ───────────────────────────────────────────────
-        mom_fast   = p.get("mom_fast", 10)
-        mom_slow   = p.get("mom_slow", 40)
-        mom_signal = p.get("mom_signal", 9)
+        log_ret = np.diff(np.log(np.maximum(close, 1e-9)), prepend=np.nan)
 
-        roc_fast = self._roc(close, mom_fast)
-        roc_slow = self._roc(close, mom_slow)
-        log_ret  = np.diff(np.log(np.maximum(close, 1e-9)), prepend=np.nan)
+        mom_z, mr_signal, ofi_z, ofi_acc_long, ofi_acc_short = \
+            self._compute_factors(close, high, low, volume, log_ret, p, lookback, n)
+
+        regime = self._compute_regime(log_ret, p, lookback, n)
+
+        final_signal, thresh, ofi_ok_long, ofi_ok_short, sig_rising, sig_falling = \
+            self._apply_opts(mom_z, mr_signal, ofi_z, ofi_acc_long, ofi_acc_short,
+                             regime, p, lookback, n)
+
+        vwap_dist = self._compute_vwap_dist(close, high, low, volume,
+                                             p, lookback)
+
+        warmed     = np.arange(n) > (wf_warm + lookback)
+        long_cond  = (warmed & (final_signal >  thresh) & ofi_ok_long
+                      & (vwap_dist <= p.get("vwap_dev", 1.5)) & sig_rising)
+        short_cond = (warmed & (final_signal < -thresh) & ofi_ok_short
+                      & (vwap_dist >= -p.get("vwap_dev", 1.5)) & sig_falling)
+
+        sig_out = np.zeros(n, dtype=int)
+        sig_out[long_cond]  =  1
+        sig_out[short_cond] = -1
+        return pd.Series(sig_out, index=df.index)
+
+    def _compute_factors(
+        self, close: np.ndarray, high: np.ndarray, low: np.ndarray,
+        volume: np.ndarray, log_ret: np.ndarray,
+        p: Dict[str, Any], lookback: int, n: int,
+    ):
+        """Compute momentum z-score, OU mean-reversion signal, OFI z-score."""
+        # Factor 1: Volatility-adjusted momentum
         rv       = self._rolling_std(log_ret, p.get("vol_len", 20)) * np.sqrt(252) * 100
+        roc_fast = self._roc(close, p.get("mom_fast", 10))
+        roc_slow = self._roc(close, p.get("mom_slow", 40))
+        mom_raw  = (roc_fast - roc_slow) / np.maximum(rv, 0.001)
+        mom_z    = self._zscore(self._ema(mom_raw, p.get("mom_signal", 9)), lookback)
 
-        mom_raw      = (roc_fast - roc_slow) / np.maximum(rv, 0.001)
-        mom_smoothed = self._ema(mom_raw, mom_signal)
-        mom_z        = self._zscore(mom_smoothed, lookback)
+        # Factor 2: Ornstein-Uhlenbeck mean reversion
+        log_price = np.log(np.maximum(close, 1e-9))
+        ou_len    = p.get("ou_len", 30)
+        ou_z      = ((log_price - self._rolling_mean(log_price, ou_len))
+                     / np.maximum(self._rolling_std(log_price, ou_len), 1e-9))
+        mr_signal = -ou_z
 
-        # ── Factor 2: OU Mean Reversion ─────────────────────────────────────
-        ou_len     = p.get("ou_len", 30)
-        log_price  = np.log(np.maximum(close, 1e-9))
-        lp_mean    = self._rolling_mean(log_price, ou_len)
-        lp_std     = self._rolling_std(log_price, ou_len)
-        ou_z       = (log_price - lp_mean) / np.maximum(lp_std, 1e-9)
-        mr_signal  = -ou_z
+        # Factor 3: Order Flow Imbalance (range-proxy for zero-volume forex)
+        of_len  = p.get("of_len", 14)
+        crange  = np.maximum(high - low, 1e-9)
+        buy_p   = (close - low)  / crange
+        sell_p  = (high - close) / crange
 
-        # ── Factor 3: Order Flow Imbalance ───────────────────────────────────
-        # For forex markets (EURUSD, etc.) yfinance returns volume=0.
-        # We detect this and automatically switch to a range-based OFI proxy
-        # that captures the same bar-close-position information without volume.
-        # Proxy formula: close_position = (close-low)/(high-low), normalised to [-1,+1]
-        # This is embedded in the SAME code path -- no separate function.
-        of_len    = p.get("of_len", 14)
-        crange    = np.maximum(high - low, 1e-9)
-        buy_p     = (close - low)  / crange    # [0,1]
-        sell_p    = (high - close) / crange    # [0,1]
-
-        has_volume = volume.sum() > 0          # False for EURUSD/forex
-        if not has_volume:
-            # Log once per run (only at bar 0 to avoid log spam)
-            self.logger.info(
-                "volume=0 detected: using range-based OFI proxy "
-                "((close_position - 0.5) * 2). Market is likely forex."
-            )
-            # ofi_proxy in [-1, +1]: positive = price closed near high (buy pressure)
-            ofi_proxy   = (buy_p - 0.5) * 2
-            ofi_raw     = self._rolling_mean(ofi_proxy, of_len)   # smooth over window
+        if volume.sum() == 0:
+            self.logger.info("volume=0 detected: using range-based OFI proxy.")
+            ofi_raw = self._rolling_mean((buy_p - 0.5) * 2, of_len)
         else:
-            buy_vol     = volume * buy_p
-            sell_vol    = volume * sell_p
-            ofi_buy     = self._rolling_sum(buy_vol,  of_len)
-            ofi_sell    = self._rolling_sum(sell_vol, of_len)
-            ofi_total   = np.maximum(ofi_buy + ofi_sell, 1e-9)
-            ofi_raw     = (ofi_buy - ofi_sell) / ofi_total
+            ofi_buy  = self._rolling_sum(volume * buy_p,  of_len)
+            ofi_sell = self._rolling_sum(volume * sell_p, of_len)
+            ofi_raw  = (ofi_buy - ofi_sell) / np.maximum(ofi_buy + ofi_sell, 1e-9)
 
         ofi_z         = self._zscore(ofi_raw, lookback)
-
-        # OFI momentum (same direction as previous bar)
         ofi_acc_long  = np.roll(ofi_z, 1) < ofi_z
         ofi_acc_short = np.roll(ofi_z, 1) > ofi_z
         ofi_acc_long[0] = ofi_acc_short[0] = False
 
-        # ── Factor 4: GARCH Regime ───────────────────────────────────────────
-        ga = p.get("garch_alpha", 0.15)
-        gb = p.get("garch_beta",  0.80)
-        rc = p.get("regime_confirm", 3)
-        vt = p.get("vol_thresh",    1.20)
-        vl = p.get("vol_low_mult",  0.83)
+        return mom_z, mr_signal, ofi_z, ofi_acc_long, ofi_acc_short
 
-        rv_long  = self._rolling_mean(self._rolling_std(log_ret, p.get("vol_len", 20)), lookback)
-        rv_ratio = self._rolling_std(log_ret, p.get("vol_len", 20)) / np.maximum(rv_long, 1e-9)
+    def _compute_regime(
+        self, log_ret: np.ndarray, p: Dict[str, Any], lookback: int, n: int,
+    ) -> np.ndarray:
+        """GARCH(1,1) proxy + RV ratio + hysteresis regime detection."""
+        ga = p.get("garch_alpha", 0.15); gb = p.get("garch_beta", 0.80)
+        rv_curr  = self._rolling_std(log_ret, p.get("vol_len", 20))
+        rv_long  = self._rolling_mean(rv_curr, lookback)
+        rv_ratio = rv_curr / np.maximum(rv_long, 1e-9)
 
         garch_var = np.zeros(n)
         for i in range(1, n):
-            garch_var[i] = (ga * log_ret[i-1]**2 + gb * garch_var[i-1]
-                            if not np.isnan(log_ret[i-1]) else garch_var[i-1])
+            lr = log_ret[i-1]
+            garch_var[i] = (ga * lr**2 + gb * garch_var[i-1]
+                            if not np.isnan(lr) else garch_var[i-1])
         garch_vol   = np.sqrt(np.maximum(garch_var, 0))
-        garch_long  = self._rolling_mean(garch_vol, lookback)
-        garch_ratio = garch_vol / np.maximum(garch_long, 1e-9)
+        garch_ratio = garch_vol / np.maximum(self._rolling_mean(garch_vol, lookback), 1e-9)
 
-        # Hysteresis regime
-        regime = self._detect_regime(rv_ratio, garch_ratio, vt, vl, rc, n)
+        return self._detect_regime(
+            rv_ratio, garch_ratio,
+            p.get("vol_thresh", 1.20), p.get("vol_low_mult", 0.83),
+            p.get("regime_confirm", 3), n,
+        )
 
-        # ── Composite Signal ──────────────────────────────────────────────────
-        # Weights per regime
-        w_mom = np.where(regime == 1, 0.55, np.where(regime == -1, 0.15, 0.35))
-        w_mr  = np.where(regime == 1, 0.15, np.where(regime == -1, 0.50, 0.30))
-        w_ofi = np.where(regime == 1, 0.30, np.where(regime == -1, 0.35, 0.35))
+    def _apply_opts(
+        self, mom_z, mr_signal, ofi_z, ofi_acc_long, ofi_acc_short,
+        regime, p: Dict[str, Any], lookback: int, n: int,
+    ):
+        """
+        Build composite signal and apply OPT-1/2/4 filters.
+        Returns final_signal, thresh, ofi_ok_long, ofi_ok_short,
+                sig_rising, sig_falling.
+        """
+        # Regime-adaptive weights (Pine v2 values, documented in header)
+        HV_W = (0.55, 0.15, 0.30); LV_W = (0.15, 0.50, 0.35); NM_W = (0.35, 0.30, 0.35)
+        w_mom = np.where(regime == 1, HV_W[0], np.where(regime == -1, LV_W[0], NM_W[0]))
+        w_mr  = np.where(regime == 1, HV_W[1], np.where(regime == -1, LV_W[1], NM_W[1]))
+        w_ofi = np.where(regime == 1, HV_W[2], np.where(regime == -1, LV_W[2], NM_W[2]))
 
         composite    = mom_z * w_mom + mr_signal * w_mr + ofi_z * w_ofi
-        comp_smooth  = self._ema(composite, 3)
-        final_signal = self._zscore(comp_smooth, lookback)
+        final_signal = self._zscore(self._ema(composite, 3), lookback)
 
-        # ── [OPT-1] Dynamic Threshold ────────────────────────────────────────
-        thresh_base   = p.get("thresh_base", 1.50)
-        thresh_hv     = p.get("thresh_hv_mult", 1.30)
-        thresh_lv     = p.get("thresh_lv_mult", 0.80)
-        opt1          = p.get("opt1_enable", True)
-
-        if opt1:
-            thresh = np.where(regime == 1,  thresh_base * thresh_hv,
-                     np.where(regime == -1, thresh_base * thresh_lv, thresh_base))
+        # [OPT-1] Dynamic threshold per regime
+        tb = p.get("thresh_base", 1.50)
+        if p.get("opt1_enable", True):
+            thresh = np.where(regime ==  1, tb * p.get("thresh_hv_mult", 1.30),
+                     np.where(regime == -1, tb * p.get("thresh_lv_mult", 0.80), tb))
         else:
-            thresh = np.where(regime == 1, thresh_base * thresh_hv, thresh_base)
+            thresh = np.where(regime == 1, tb * p.get("thresh_hv_mult", 1.30), tb)
 
-        # ── [OPT-2] OFI Regime Filter ────────────────────────────────────────
-        opt2       = p.get("opt2_enable", True)
-        ofi_hv_min = p.get("ofi_hv_min", 0.50)
-        ofi_nr_min = p.get("ofi_nrm_min", 0.30)
-        ofi_lv_min = p.get("ofi_lv_min",  0.20)
-
-        if opt2:
-            ofi_min = np.where(regime == 1, ofi_hv_min,
-                      np.where(regime == -1, ofi_lv_min, ofi_nr_min))
+        # [OPT-2] Regime-aware OFI minimum
+        if p.get("opt2_enable", True):
+            ofi_min = np.where(regime ==  1, p.get("ofi_hv_min", 0.50),
+                      np.where(regime == -1, p.get("ofi_lv_min", 0.20),
+                                             p.get("ofi_nrm_min", 0.30)))
         else:
             ofi_min = np.full(n, 0.30)
 
         ofi_ok_long  = (ofi_z >  ofi_min) & ofi_acc_long
         ofi_ok_short = (ofi_z < -ofi_min) & ofi_acc_short
 
-        # ── [OPT-4] Signal Momentum ───────────────────────────────────────────
-        opt4  = p.get("opt4_enable", True)
+        # [OPT-4] Signal momentum filter
         sm_lb = p.get("sigmon_lookback", 2)
-
-        if opt4:
+        if p.get("opt4_enable", True):
             sig_rising  = np.ones(n, bool)
             sig_falling = np.ones(n, bool)
             for k in range(sm_lb):
@@ -169,41 +180,32 @@ class AlgorithmA(BaseAlgorithm):
         else:
             sig_rising = sig_falling = np.ones(n, bool)
 
-        # ── VWAP Filter (rolling window -- NOT cumulative) ───────────────────
-        # The Pine Script uses cumulative VWAP which is session-reset there.
-        # A never-resetting cumulative VWAP drifts far from price in trending
-        # markets (XU100, XAUUSD) and permanently blocks all entries.
-        # Fix: use a rolling VWAP over the same lookback window instead.
-        vwap_dev  = p.get("vwap_dev", 1.5)
-        vwap_len  = p.get("vwap_len", lookback)       # rolling window length
-        atr_arr   = self._atr(df, p.get("atr_len", 14))
-        hlc3      = (high + low + close) / 3
-        hlc3v     = hlc3 * volume
-        roll_hlc3v= self._rolling_sum(hlc3v, vwap_len)
-        roll_vol  = self._rolling_sum(volume, vwap_len)
-        vwap_val  = roll_hlc3v / np.maximum(roll_vol, 1e-9)
-        vwap_dist = (close - vwap_val) / np.maximum(atr_arr, 1e-9)
+        return final_signal, thresh, ofi_ok_long, ofi_ok_short, sig_rising, sig_falling
 
-        # ── Entry Conditions ─────────────────────────────────────────────────
-        warmed = np.arange(n) > (wf_warm + lookback)
-
-        long_cond  = (warmed
-                      & (final_signal >  thresh)
-                      & ofi_ok_long
-                      & (vwap_dist <= vwap_dev)
-                      & sig_rising)
-
-        short_cond = (warmed
-                      & (final_signal < -thresh)
-                      & ofi_ok_short
-                      & (vwap_dist >= -vwap_dev)
-                      & sig_falling)
-
-        sig_out = np.zeros(n, dtype=int)
-        sig_out[long_cond]  =  1
-        sig_out[short_cond] = -1
-
-        return pd.Series(sig_out, index=df.index)
+    def _compute_vwap_dist(
+        self, close: np.ndarray, high: np.ndarray, low: np.ndarray,
+        volume: np.ndarray, p: Dict[str, Any], lookback: int,
+    ) -> np.ndarray:
+        """
+        Rolling VWAP distance in ATR units.
+        Uses rolling window (not cumulative) to avoid drift in trending markets.
+        """
+        vwap_len   = p.get("vwap_len", lookback)
+        hlc3       = (high + low + close) / 3
+        roll_hlc3v = self._rolling_sum(hlc3 * volume, vwap_len)
+        roll_vol   = self._rolling_sum(volume, vwap_len)
+        vwap_val   = roll_hlc3v / np.maximum(roll_vol, 1e-9)
+        # ATR via Wilder smoothing on true range
+        tr         = np.maximum(high - low,
+                     np.maximum(np.abs(high - np.roll(close, 1)),
+                                np.abs(low  - np.roll(close, 1))))
+        tr[0]      = high[0] - low[0]
+        atr_len    = p.get("atr_len", 14)
+        atr        = np.zeros(len(tr))
+        atr[:atr_len] = tr[:atr_len].mean()
+        for i in range(atr_len, len(tr)):
+            atr[i] = (atr[i-1] * (atr_len - 1) + tr[i]) / atr_len
+        return (close - vwap_val) / np.maximum(atr, 1e-9)
 
     # ── Parameter Space ──────────────────────────────────────────────────────
 

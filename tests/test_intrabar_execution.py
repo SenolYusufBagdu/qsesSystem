@@ -347,13 +347,15 @@ def test_exit_reason_recorded_in_trades():
     """
     End-to-end: run a full backtest on a tiny crafted DataFrame.
     The resulting trade dicts must contain 'exit_reason' field.
+    Entry now happens at bar N+1 open (Pine-equivalent execution).
     """
     np.random.seed(0)
     n = 300
     price = 100 + np.cumsum(np.random.normal(0, 0.5, n))
     hi    = price + np.abs(np.random.normal(0, 0.3, n))
     lo    = price - np.abs(np.random.normal(0, 0.3, n))
-    opens = price + np.random.normal(0, 0.1, n)
+    opens = np.roll(price, 1) + np.random.normal(0, 0.1, n)
+    opens[0] = price[0]
     vol   = np.ones(n) * 100_000
     idx   = pd.date_range("2023-01-01", periods=n, freq="3h")
     df    = pd.DataFrame({"open": opens, "high": hi, "low": lo,
@@ -370,8 +372,9 @@ def test_exit_reason_recorded_in_trades():
                 "sl_intrabar", "tp_intrabar", "gap_stop",
                 "signal_exit", "end_of_data"
             }, f"Unknown exit_reason: {t['exit_reason']!r}"
-    # Pass even with 0 trades (signal generation may be conservative)
-    # The key test is that no KeyError or AttributeError was raised above
+            # Entry bar must be valid index
+            assert t["entry_bar"] >= 1, \
+                f"entry_bar={t['entry_bar']} should be >= 1 (N+1 entry)"
 
 
 # ─── Test 11: Buy & Hold baseline ────────────────────────────────────────────
@@ -400,3 +403,61 @@ def test_buy_and_hold_baseline_computable():
     down_prices = np.array([100.0, 90.0, 80.0])
     bh_down = buy_and_hold_return(down_prices)
     assert bh_down < 0, f"Expected negative B&H for declining: {bh_down}"
+
+
+# ─── Test 12: N+1 entry execution (Gate 8 fix validation) ────────────────────
+
+def test_n_plus_one_entry_execution():
+    """
+    Signal at bar N must result in entry at bar N+1 open price,
+    NOT at bar N close price. This matches Pine Strategy Tester
+    behaviour (barstate.isconfirmed -> next bar open execution).
+
+    Verify by constructing a DataFrame where opens[N+1] is deliberately
+    +200 pts above closes[N] (clear gap), then checking that entry_px
+    is derived from opens[N+1], not closes[N].
+    """
+    np.random.seed(7)
+    n     = 2000
+    ret   = np.random.normal(0.0008, 0.013, n)
+    price = 15000 * np.exp(np.cumsum(ret))
+    hi    = price * (1 + np.abs(np.random.normal(0, 0.008, n)))
+    lo    = price * (1 - np.abs(np.random.normal(0, 0.008, n)))
+    # Deliberate +200pt gap so open[N+1] and close[N] are clearly distinct
+    opens = np.roll(price, 1) + 200.0
+    opens[0] = price[0]
+    vol   = np.random.randint(100_000, 500_000, n).astype(float)
+    idx   = pd.date_range("2022-01-01", periods=n, freq="3h")
+    df    = pd.DataFrame({"open": opens, "high": hi, "low": lo,
+                           "close": price, "volume": vol}, index=idx)
+
+    algo   = get_algorithm("AlgorithmA")
+    params = algo.model_configs()[1]
+    m      = algo.run(df, params)
+
+    if not m.trades:
+        pytest.fail("No trades generated — cannot verify N+1 entry timing")
+
+    failures = []
+    for t in m.trades:
+        entry_bar = t["entry_bar"]
+        entry_px  = t["entry_px"]
+        signal_bar = entry_bar - 1
+        if signal_bar < 0:
+            continue
+
+        close_at_signal = price[signal_bar]
+        open_at_entry   = opens[entry_bar]
+
+        dist_from_open  = abs(entry_px - open_at_entry)
+        dist_from_close = abs(entry_px - close_at_signal)
+
+        if dist_from_open >= dist_from_close:
+            failures.append(
+                f"entry_bar={entry_bar}: entry_px={entry_px:.2f} closer to "
+                f"close[{signal_bar}]={close_at_signal:.2f} (dist={dist_from_close:.2f}) "
+                f"than open[{entry_bar}]={open_at_entry:.2f} (dist={dist_from_open:.2f})"
+            )
+
+    assert not failures, \
+        f"N+1 entry FAILED on {len(failures)} trades:\n" + "\n".join(failures[:3])

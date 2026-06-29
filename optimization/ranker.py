@@ -8,7 +8,7 @@ Key principle: Stability > Max Profit
   on one market and -50% on another.
 """
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 
 import numpy as np

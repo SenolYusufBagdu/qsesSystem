@@ -13,10 +13,9 @@ import traceback
 from typing import List, Optional, Callable
 from itertools import product
 
-import pandas as pd
 from joblib import Parallel, delayed
 
-from .algorithms import get_algorithm, REGISTRY
+from .algorithms import get_algorithm
 from .core.types import BacktestResult, BacktestMetrics
 from .data.fetcher import DataFetcher
 from .optimization.optimizer import Optimizer

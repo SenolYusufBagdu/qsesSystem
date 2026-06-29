@@ -155,19 +155,33 @@ class BaseAlgorithm(ABC):
                     pos = 0
 
             # ── Entry check ───────────────────────────────────────────────────
+            # Signal is generated at bar N close (barstate.isconfirmed equivalent).
+            # Entry executes at bar N+1 open — matching Pine Strategy Tester
+            # behaviour where strategy.entry() after a confirmed bar fills at
+            # the NEXT bar's open price.
+            # Implementation: we store a pending signal at bar i; on bar i+1
+            # the open price is used for entry. This eliminates same-bar
+            # execution leakage (previously entry was at close[i]).
             if pos == 0 and i >= 10:
                 sig = int(sigs[i])
                 if sig != 0:
-                    wr    = wins_seen / trades_seen if trades_seen >= 10 else 0.5
-                    rr    = atr_tp / max(atr_stop, 0.001)
-                    kelly = (wr * rr - (1 - wr)) / max(rr, 0.001)
-                    _size = min(max(kelly * kelly_f, 0.0), kelly_cap)   # noqa: F841
+                    # Check there is a next bar to enter on
+                    if i + 1 < len(closes):
+                        wr    = wins_seen / trades_seen if trades_seen >= 10 else 0.5
+                        rr    = atr_tp / max(atr_stop, 0.001)
+                        kelly = (wr * rr - (1 - wr)) / max(rr, 0.001)
+                        _size = min(max(kelly * kelly_f, 0.0), kelly_cap)   # noqa: F841
 
-                    pos       = sig
-                    entry_px  = closes[i] + slip * sig   # slippage on entry
-                    stop_px   = entry_px - sig * atr * atr_stop
-                    tp_px     = entry_px + sig * atr * atr_tp
-                    entry_bar = i
+                        # Entry at next bar's open
+                        entry_open = opens[i + 1]
+                        atr_entry  = atrs[i + 1]
+                        slip_entry = slippage_atr_frac * atr_entry
+
+                        pos       = sig
+                        entry_px  = entry_open + slip_entry * sig
+                        stop_px   = entry_px - sig * atr_entry * atr_stop
+                        tp_px     = entry_px + sig * atr_entry * atr_tp
+                        entry_bar = i + 1
 
         # Close open position at last bar
         if pos != 0:
