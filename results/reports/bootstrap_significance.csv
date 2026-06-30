@@ -1,0 +1,7 @@
+market,model,strat_ci_lo,strat_ci_hi,bh_ci_lo,bh_ci_hi,p_value,significant_vs_bh,interpretation
+NQ1!,M0,-0.95,287.93,-16.26,17.79,0.111,False,Cannot distinguish from B&H at p=0.05 (p=0.111)
+NQ1!,M1,-4.97,77.69,-14.09,16.22,0.291,False,Cannot distinguish from B&H at p=0.05 (p=0.291)
+NQ1!,M2,-1.17,24.35,-8.65,10.67,0.149,False,Cannot distinguish from B&H at p=0.05 (p=0.149)
+NQ1!,M3,-0.97,287.93,-16.26,17.79,0.111,False,Cannot distinguish from B&H at p=0.05 (p=0.111)
+XU100,M2,-105.19,0.44,-12.11,11.82,0.907,False,Cannot distinguish from B&H at p=0.05 (p=0.907)
+XAUUSD,M2,-255.64,0.95,-10.37,10.97,0.906,False,Cannot distinguish from B&H at p=0.05 (p=0.906)

@@ -1,0 +1,98 @@
+{
+  "XU100_M2": {
+    "market": "XU100",
+    "model_id": 2,
+    "avg_test_sharpe": 0.0,
+    "train_test_decay": -1.0,
+    "passes_decay_gate": true,
+    "passes_ruin_gate": true,
+    "passes_sample_gate": false,
+    "mc_ruin_prob": 0.0,
+    "total_test_trades": 9,
+    "deflated_sharpe": -0.0,
+    "wf_score": 71.67,
+    "confidence_score": 88.6,
+    "bs_p_value": 0.9072,
+    "bs_significant": false,
+    "unstable_params": [],
+    "selection_rationale": "Market=XU100 Algo=AlgorithmA M2 | Status=FAIL | Avg test Sharpe=0.00 (walks passed 0/3, std=0.00) | Train/test decay=-100.0% (threshold=50%) | Ruin prob=0.0% (threshold=5%) | Test trades=9 | DSR=-0.00 | Unstable params: none | Confidence=89%",
+    "walks": [
+      {
+        "walk_id": 1,
+        "train_sharpe": -3.1591,
+        "test_sharpe": 0.0,
+        "test_wr": 0.25,
+        "test_dd": -11.2261,
+        "test_trades": 4,
+        "test_pnl": -10.0582
+      },
+      {
+        "walk_id": 2,
+        "train_sharpe": -2.3296,
+        "test_sharpe": 0.0,
+        "test_wr": 0.3333,
+        "test_dd": -8.2604,
+        "test_trades": 3,
+        "test_pnl": -2.2534
+      },
+      {
+        "walk_id": 3,
+        "train_sharpe": -1.1326,
+        "test_sharpe": 0.0,
+        "test_wr": 0.0,
+        "test_dd": -10.6792,
+        "test_trades": 2,
+        "test_pnl": -10.9768
+      }
+    ]
+  },
+  "XAUUSD_M2": {
+    "market": "XAUUSD",
+    "model_id": 2,
+    "avg_test_sharpe": 0.0,
+    "train_test_decay": 1.0,
+    "passes_decay_gate": false,
+    "passes_ruin_gate": true,
+    "passes_sample_gate": true,
+    "mc_ruin_prob": 0.0,
+    "total_test_trades": 11,
+    "deflated_sharpe": -0.0,
+    "wf_score": 31.02,
+    "confidence_score": 77.1,
+    "bs_p_value": 0.9064,
+    "bs_significant": false,
+    "unstable_params": [
+      "regime_confirm"
+    ],
+    "selection_rationale": "Market=XAUUSD Algo=AlgorithmA M2 | Status=FAIL | Avg test Sharpe=0.00 (walks passed 0/3, std=0.00) | Train/test decay=100.0% (threshold=50%) | Ruin prob=0.0% (threshold=5%) | Test trades=11 | DSR=-0.00 | Unstable params: regime_confirm | Confidence=77%",
+    "walks": [
+      {
+        "walk_id": 1,
+        "train_sharpe": -0.0303,
+        "test_sharpe": 0.0,
+        "test_wr": 0.0,
+        "test_dd": -7.422,
+        "test_trades": 4,
+        "test_pnl": -7.6376
+      },
+      {
+        "walk_id": 2,
+        "train_sharpe": 1.3002,
+        "test_sharpe": 0.0,
+        "test_wr": 0.3333,
+        "test_dd": -4.1124,
+        "test_trades": 3,
+        "test_pnl": -1.413
+      },
+      {
+        "walk_id": 3,
+        "train_sharpe": -0.5779,
+        "test_sharpe": 0.0,
+        "test_wr": 0.25,
+        "test_dd": -3.8304,
+        "test_trades": 4,
+        "test_pnl": -3.3214
+      }
+    ]
+  }
+}

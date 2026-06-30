@@ -1,0 +1,7 @@
+market,model,avg_test_sharpe,train_test_decay,mc_ruin_prob,total_test_trades,deflated_sharpe,bs_p_value,bs_significant,confidence_score,passes_all_gates,elimination_reason
+NQ1!,M0,1.28,-0.229,0.0,6,11.49,0.111,False,83,False,"trades<10 (MIN_VALID_TRADES=10, total=6)"
+NQ1!,M1,1.28,-0.229,0.0,7,5.14,0.291,False,83,False,trades<10 (total=7)
+NQ1!,M2,1.28,0.399,0.0,13,7.64,0.149,False,83,True,none
+NQ1!,M3,1.28,-0.229,0.0,6,11.67,0.111,False,83,False,trades<10 (total=6)
+XU100,M2,0.0,-1.0,0.0,9,-0.0,0.907,False,89,False,"trades<10 (total=9) AND decay>50% (train Sharpe negative, undefined decay)"
+XAUUSD,M2,0.0,1.0,0.0,11,-0.0,0.906,False,77,False,decay=100% > MAX_SHARPE_DECAY=50%

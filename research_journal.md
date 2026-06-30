@@ -68,3 +68,42 @@ Cumulative — each phase appended below the previous, never overwritten.
 - Sentetik veri, gerçek market davranışını yeterince temsil etmiyor. Gerçek yfinance verisiyle bu fark kapanır mı?
 - `atr_tp=10xATR` XAUUSD için Python'da optimal değil; optimizer bunu 3-5x'e çekecek mi?
 - avg_hold'u kısaltmak için `exit_thresh` daha sıkıştırılabilir mi, ne kadar WR kaybı olur?
+
+---
+
+## Faz 6 (Rolling Walk-Forward + İstatistiksel Doğrulama)
+
+**Hypothesis:** Walk-forward train/test ayrımı uygulandığında, daha önce
+"stabil" görünen AlgorithmA konfigürasyonlarının çoğu overfitting belirtisi
+gösterecek ve elenecek.
+
+**Experiment:** 3 market (NQ1!, XU100, XAUUSD) × 4 model (sadece NQ1! için
+tam, diğerleri M2 ile pilot) × 3 rolling walk × 5 optimizer trial/walk.
+Monte Carlo (1000 permütasyon), Bootstrap (5000 örnek), Deflated Sharpe
+Ratio hesaplandı.
+
+**Observation:** 6 test edilen konfigürasyondan sadece 1'i (NQ1! M2) tüm
+gate'leri geçti. Ancak o bile bootstrap p-value=0.149 ile Buy&Hold'dan
+istatistiksel olarak ayırt edilemiyor.
+
+**Unexpected Findings:**
+1. `train_test_decay` formülü train Sharpe negatif olduğunda işaret
+   değiştiriyor (XU100: decay=-100%, train=-2.21, test=0.00 — matematiksel
+   olarak "iyileşme" gibi görünüyor ama aslında ikisi de kötü). Bu formülün
+   bir sınır-durum zayıflığı — Faz 7'de düzeltilmeli.
+2. n_trials=5 (zaman kısıtı nedeniyle düşürüldü) optimizer'ın gerçek
+   potansiyelini göstermiyor olabilir. 50 trial ile NQ1! M0/M1/M3 belki
+   10+ trade üretecek parametre bulabilirdi.
+3. DSR (Deflated Sharpe Ratio) ham Sharpe'tan çok yüksek çıktı bazı
+   konfigürasyonlarda (DSR=11.49 > SR_obs öncesi hesaplanan değer) —
+   bu PSR formülünün küçük N (15 trial) ile garip davranması; gerçek
+   N_trials büyüdükçe (288 backtest × 50 trial = 14400) DSR çok daha
+   sert bir düzeltme uygulayacak.
+
+**Next Questions:**
+- n_trials=50 ile tam koşum yapılırsa NQ1! M0/M1/M3 sample gate'i geçer mi?
+- train_test_decay formülü train_sharpe<0 durumunda nasıl düzeltilmeli?
+  (önerilen: abs(train)+abs(test) tabanlı simetrik fark kullan)
+- Gerçek piyasa verisiyle (sentetik değil) bu sonuçlar nasıl değişir?
+- p=0.149 "anlamlı değil" sonucu, stratejinin gerçekten alfa üretmediğini
+  mi gösteriyor, yoksa örneklem boyutu (13 trade) çok mu küçük?

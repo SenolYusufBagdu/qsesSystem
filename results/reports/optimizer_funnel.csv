@@ -1,0 +1,7 @@
+market,model,n_trials_tested,n_walks,top20_selection,top5_selection,final_status,elimination_step
+NQ1!,M0,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,ELIM,"trades<10 (MIN_VALID_TRADES=10, total=6)"
+NQ1!,M1,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,ELIM,trades<10 (total=7)
+NQ1!,M2,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,PASS,none
+NQ1!,M3,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,ELIM,trades<10 (total=6)
+XU100,M2,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,ELIM,"trades<10 (total=9) AND decay>50% (train Sharpe negative, undefined decay)"
+XAUUSD,M2,5,3,robustness_score>0 -> top 5 candidates,avg_test_sharpe ranking,ELIM,decay=100% > MAX_SHARPE_DECAY=50%

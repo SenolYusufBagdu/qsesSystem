@@ -74,3 +74,23 @@ CHARTS_DIR:        str = "results/charts"
 CHART_THEME: str = "plotly_dark"
 CHART_WIDTH: int  = 1400
 CHART_HEIGHT: int = 800
+
+# ─── Walk-Forward (Faz 6) ────────────────────────────────────────────────────
+WALK_FORWARD_TRAIN_RATIO: float = 0.70   # 70% train, 30% test per walk
+WALK_FORWARD_N_WALKS:     int   = 5      # rolling windows
+WALK_FORWARD_MARKETS:     list  = ["NQ1!", "XU100", "XAUUSD"]
+
+# WalkForwardScore weights (must sum to 1.0)
+WALK_FORWARD_SCORE_WEIGHTS: dict = {
+    "avg_test_sharpe":        0.35,
+    "worst_walk_sharpe":      0.25,
+    "train_test_consistency": 0.20,
+    "parameter_stability":    0.20,
+}
+
+MAX_SHARPE_DECAY:      float = 0.50   # train/test Sharpe decay > 50% -> eliminated
+MAX_PARAM_CV:          float = 0.30   # param coefficient of variation > 30% -> UNSTABLE
+MAX_RUIN_PROBABILITY:  float = 0.05   # P(ruin) > 5% -> eliminated
+N_MONTE_CARLO:         int   = 1000
+N_BOOTSTRAP:           int   = 5000
+OPTIMIZER_N_TRIALS_WF: int   = 20     # trials per walk (speed vs quality balance)
