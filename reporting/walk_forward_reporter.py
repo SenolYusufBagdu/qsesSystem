@@ -20,7 +20,16 @@ from ..utils.logger import get_logger
 logger = get_logger("WFReporter")
 
 
+def _ensure_reports_dir() -> None:
+    """Defensive: callers that use this module standalone (e.g. a notebook or
+    the `python -c` snippet in the README) may not have created REPORTS_DIR
+    yet. main.py's CLI path already does this once up front, but each
+    save_* function guards for direct/standalone use too."""
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+
+
 def save_walk_detail(results: List[WalkForwardResult]) -> str:
+    _ensure_reports_dir()
     rows = []
     for r in results:
         for w in r.walks:
@@ -48,6 +57,7 @@ def save_walk_detail(results: List[WalkForwardResult]) -> str:
 
 
 def save_model_summary(results: List[WalkForwardResult]) -> str:
+    _ensure_reports_dir()
     """Per-model summary table with all aggregate metrics."""
     rows = []
     for r in results:
@@ -87,6 +97,7 @@ def save_model_summary(results: List[WalkForwardResult]) -> str:
 
 
 def save_bootstrap(results: List[WalkForwardResult]) -> str:
+    _ensure_reports_dir()
     rows = []
     for r in results:
         rows.append({
@@ -110,9 +121,12 @@ def save_bootstrap(results: List[WalkForwardResult]) -> str:
 
 
 def save_rationale(results: List[WalkForwardResult]) -> str:
+    _ensure_reports_dir()
     out = os.path.join(REPORTS_DIR, "selection_rationale.md")
+    algos = sorted(set(r.algorithm for r in results))
     lines = ["# QSES Walk-Forward Selection Rationale\n",
-             f"Generated: Faz 6 | Markets: {sorted(set(r.market for r in results))}\n\n"]
+             f"Markets: {sorted(set(r.market for r in results))} | "
+             f"Algorithms: {algos}\n\n"]
     for r in results:
         wf_score = WalkForwardEngine.compute_wf_score(r)
         passed   = r.passes_decay_gate and r.passes_ruin_gate and r.passes_sample_gate
@@ -136,9 +150,10 @@ def save_rationale(results: List[WalkForwardResult]) -> str:
 
 def print_model_table(results: List[WalkForwardResult]) -> None:
     """EK-4 acceptance test format table."""
+    algos = sorted(set(r.algorithm for r in results))
     header = f"{'Market':<8} {'Model':<6} {'Tr.Sh':>7} {'Te.Sh':>7} {'Decay':>7} {'Ruin%':>7} {'DSR':>6} {'WFS':>6} {'Status':<12}"
     print("\n" + "="*75)
-    print("FAZ 6 WALK-FORWARD RESULTS — Algorithm A")
+    print(f"WALK-FORWARD RESULTS — {', '.join(algos)}")
     print("="*75)
     print(header)
     print("-"*75)

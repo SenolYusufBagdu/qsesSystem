@@ -75,10 +75,14 @@ CHART_THEME: str = "plotly_dark"
 CHART_WIDTH: int  = 1400
 CHART_HEIGHT: int = 800
 
-# ─── Walk-Forward (Faz 6) ────────────────────────────────────────────────────
+# ─── Walk-Forward (Faz 6, Faz 7'de 6 markete genişletildi) ──────────────────
 WALK_FORWARD_TRAIN_RATIO: float = 0.70   # 70% train, 30% test per walk
 WALK_FORWARD_N_WALKS:     int   = 5      # rolling windows
-WALK_FORWARD_MARKETS:     list  = ["NQ1!", "XU100", "XAUUSD"]
+# Faz 6: sadece NQ1!/XU100/XAUUSD (TV referans seed'i olan marketler) test edildi.
+# Faz 7: USOIL/EURUSD/SP500 eklendi -- bu 3 market icin TV seed yok, optimizer
+# TV_REFERENCE_SEEDS'te bulamayinca otomatik olarak sadece random search'e
+# duser (bkz optimization/optimizer.py, market not in tv_seeds -> debug log).
+WALK_FORWARD_MARKETS:     list  = ["NQ1!", "XU100", "XAUUSD", "SP500", "USOIL", "EURUSD"]
 
 # WalkForwardScore weights (must sum to 1.0)
 WALK_FORWARD_SCORE_WEIGHTS: dict = {
@@ -87,6 +91,10 @@ WALK_FORWARD_SCORE_WEIGHTS: dict = {
     "train_test_consistency": 0.20,
     "parameter_stability":    0.20,
 }
+
+# RCA-7 fix: symmetric denominator so the sign of avg_train_sharpe can never
+# flip the meaning of "decay". See train_test_decay formula in walk_forward.py.
+DECAY_EPSILON:         float = 1e-6
 
 MAX_SHARPE_DECAY:      float = 0.50   # train/test Sharpe decay > 50% -> eliminated
 MAX_PARAM_CV:          float = 0.30   # param coefficient of variation > 30% -> UNSTABLE

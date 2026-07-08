@@ -1,5 +1,5 @@
 # QSES — Quant Statistical Edge System
-## Cross-Market Robustness Optimizer · Python v1.0
+## Cross-Market Robustness Optimizer · Python v1.5 (Faz 1–6 tamamlandı)
 
 ---
 
@@ -8,7 +8,7 @@
 ```
 qses/
 ├── main.py                   # Entry point / CLI
-├── engine.py                 # Orchestrates all 192 combinations
+├── engine.py                 # Orchestrates all 288 combinations
 ├── config/
 │   └── settings.py           # All tunable constants (no hardcoding)
 ├── algorithms/
@@ -18,53 +18,84 @@ qses/
 │   ├── algorithm_c.py        # Regime-gated mean reversion
 │   └── __init__.py           # Registry (add new algos here)
 ├── core/
-│   ├── types.py              # Immutable result containers
+│   ├── types.py              # Immutable result containers, MIN_VALID_TRADES=10
 │   └── metrics.py            # All 17+ metrics + robustness score
 ├── data/
-│   └── fetcher.py            # yfinance downloader + parquet cache
+│   └── fetcher.py            # yfinance downloader + parquet cache, USOIL/EURUSD handling
 ├── optimization/
 │   ├── optimizer.py          # Random search + local refinement
-│   └── ranker.py             # Cross-market stability ranking
+│   ├── ranker.py             # Cross-market stability ranking
+│   └── walk_forward.py       # Rolling walk-forward engine (Faz 6): Monte Carlo, Bootstrap, DSR
 ├── reporting/
-│   └── reporter.py           # Plotly charts, heatmaps, HTML table
+│   ├── reporter.py           # Plotly charts, heatmaps, HTML table
+│   └── walk_forward_reporter.py  # Walk-forward detail CSV + selection rationale
+├── tests/
+│   └── test_intrabar_execution.py, test_walk_forward_decay.py  # pytest, 0 skip
 └── utils/
     └── logger.py             # Structured logging
 ```
+
+> **Setup note:** this repository's top-level folder must be importable as
+> `qses` (all internal imports are relative, e.g. `from ..config.settings`).
+> If you download/clone it as `qsesSystem` or `qsesSystem-main`, rename that
+> folder to `qses` (or place it inside a parent folder and symlink it as
+> `qses`) before running `pip install -r requirements.txt` or `pytest`.
 
 ---
 
 ### Combination Matrix
 
-| Dimension    | Count | Values                              |
-|:-------------|:-----:|:------------------------------------|
-| Markets      | 4     | NQ1!, XU100, XAUUSD, SP500          |
-| Algorithms   | 3     | A (QSES T1+), B (Trend), C (MR)    |
-| Models       | 4     | Conservative → Aggressive           |
-| Timeframes   | 2     | 3h, 4h                              |
-| Periods      | 2     | 1Y, 2Y                              |
-| **Total**    | **192** |                                   |
+| Dimension    | Count | Values                                            |
+|:-------------|:-----:|:---------------------------------------------------|
+| Markets      | 6     | NQ1!, XU100, XAUUSD, SP500, USOIL, EURUSD          |
+| Algorithms   | 3     | A (QSES T1+), B (Trend), C (MR)                   |
+| Models       | 4     | Conservative → Aggressive                          |
+| Timeframes   | 2     | 3h, 4h                                             |
+| Periods      | 2     | 1Y, 2Y                                             |
+| **Total**    | **288** |                                                  |
+
+USOIL falls back from `CL=F` to the `USO` ETF if the primary ticker fails.
+EURUSD has volume=0 (forex) — algorithms automatically switch to a
+range-based OFI proxy instead of volume-weighted order flow.
 
 ---
 
 ### Usage
 
 ```bash
-# Full 192-backtest run
-cd qses
-python main.py
+# Install dependencies
+pip install -r requirements.txt
+
+# Full 288-backtest run (from the parent directory of qses/)
+python -m qses.main
 
 # Quick test: 2 markets, no optimization
-python main.py --markets NQ1! XAUUSD --no-optimize
+python -m qses.main --markets NQ1! XAUUSD --no-optimize
 
 # Specific algorithm, more optimization trials
-python main.py --algorithms AlgorithmA --n-trials 100
+python -m qses.main --algorithms AlgorithmA --n-trials 100
 
 # Parallel execution (4 cores)
-python main.py --n-jobs 4
+python -m qses.main --n-jobs 4
 
 # Single combination for debugging
-python main.py --markets NQ1! --timeframes 3h --periods 1 --algorithms AlgorithmA --no-optimize
+python -m qses.main --markets NQ1! --timeframes 3h --periods 1 --algorithms AlgorithmA --no-optimize
+
+# Unit tests
+pytest tests/ -v
+
+# Faz 6/7: rolling walk-forward validation (all 6 markets, AlgorithmA, 4h, 2Y)
+python -m qses.main --walk-forward --n-trials 50
+
+# Faz 7: walk-forward on the 3 markets added after Faz 6 (no TV reference seed,
+# optimizer falls back to pure random search for these)
+python -m qses.main --walk-forward --markets SP500 USOIL EURUSD --n-trials 50
 ```
+
+Walk-forward output goes to `results/reports/`:
+`walk_forward_detail.csv` (per-walk), `walk_forward_summary.csv` (per market/model,
+including `train_test_decay`, `passes_*_gate` columns), `bootstrap_significance.csv`,
+and `selection_rationale.md` (human-readable PASS/ELIMINATED writeup per combo).
 
 ---
 
@@ -163,7 +194,9 @@ TIMEFRAMES = ["3h", "4h", "1d"]
 
 | File | Description |
 |:-----|:------------|
-| `results/reports/all_results.csv` | All 192 backtest metrics |
+| `results/reports/all_results.csv` | All 288 backtest metrics |
+| `results/reports/walk_forward_summary.csv` | Walk-forward aggregate per (market, algo, model) |
+| `results/reports/selection_rationale.md` | Human-readable PASS/FAIL rationale per config |
 | `results/reports/ranking_table.html` | Cross-market ranking |
 | `results/charts/heatmap_sharpe.html` | Market × Algorithm heatmap |
 | `results/charts/cross_market_sharpe_ratio.html` | Bar chart |

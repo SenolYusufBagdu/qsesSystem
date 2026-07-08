@@ -33,7 +33,7 @@ from ..config.settings import (
     WALK_FORWARD_TRAIN_RATIO, WALK_FORWARD_N_WALKS,
     MAX_SHARPE_DECAY, MAX_PARAM_CV, MAX_RUIN_PROBABILITY,
     WALK_FORWARD_SCORE_WEIGHTS, OPTIMIZER_N_TRIALS_WF,
-    N_MONTE_CARLO, N_BOOTSTRAP,
+    N_MONTE_CARLO, N_BOOTSTRAP, DECAY_EPSILON,
 )
 from ..utils.logger import get_logger
 
@@ -70,7 +70,7 @@ class WalkForwardResult:
     worst_walk_dd:    float = 0.0
     avg_test_wr:      float = 0.0
     total_test_trades: int  = 0
-    train_test_decay:  float = 0.0   # (avg_train - avg_test) / avg_train
+    train_test_decay:  float = 0.0   # (avg_train - avg_test) / (|avg_train| + |avg_test| + eps), RCA-7
     wf_score:         float = 0.0
     param_cv:         Dict[str, float] = field(default_factory=dict)
     unstable_params:  List[str]        = field(default_factory=list)
@@ -246,10 +246,13 @@ class WalkForwardEngine:
         r.avg_test_wr       = float(np.mean([w.test_wr for w in r.walks]))
         r.total_test_trades = sum(w.test_trades for w in r.walks)
         avg_train = float(np.mean(tr_sh)) if tr_sh else 0.0
-        if avg_train != 0:
-            r.train_test_decay = (avg_train - r.avg_test_sharpe) / abs(avg_train)
-        else:
-            r.train_test_decay = 0.0
+        # RCA-7 fix: symmetric denominator. The old (avg_train - avg_test) / abs(avg_train)
+        # flipped sign/meaning whenever avg_train was negative (a small negative train
+        # Sharpe could make an actual improvement look like catastrophic decay, or vice
+        # versa). Denominator now uses both legs plus DECAY_EPSILON so it is always
+        # well-defined and bounded, and the sign of avg_train no longer matters.
+        denom = abs(avg_train) + abs(r.avg_test_sharpe) + DECAY_EPSILON
+        r.train_test_decay = (avg_train - r.avg_test_sharpe) / denom
 
     # ── Parameter drift ────────────────────────────────────────────────────────
 
@@ -476,8 +479,10 @@ class WalkForwardEngine:
             min(w.test_sharpe for w in r.walks) / 1.0 * 100
             if r.walks else 0, 0), 100)
 
-        # Train/test consistency: decay 0=100, decay 1=0
-        cons_score = max(0, (1 - r.train_test_decay) * 100)
+        # Train/test consistency: decay 0=100, decay 1=0.
+        # With the RCA-7 symmetric formula, decay can be slightly negative when test
+        # outperforms train, so cap the score at 100 as well as floor it at 0.
+        cons_score = min(max((1 - r.train_test_decay) * 100, 0), 100)
 
         # Parameter stability: fraction of params that are stable
         total_p = len(r.param_cv)

@@ -461,3 +461,76 @@ def test_n_plus_one_entry_execution():
 
     assert not failures, \
         f"N+1 entry FAILED on {len(failures)} trades:\n" + "\n".join(failures[:3])
+
+
+# ─── Test 13: N+1 ATR at entry (technical-debt item, verified already fixed) ─
+
+def test_stop_loss_uses_entry_bar_atr_not_signal_bar_atr():
+    """
+    research_journal.md lists as an OPEN technical debt: 'SL/TP seviyeleri N
+    barinin ATR'siyle hesaplaniyor, N+1 ATR kullanilmali' (signal bar N's ATR
+    is used for SL/TP instead of entry bar N+1's ATR).
+
+    This test proves that claim is now FALSE for the current codebase:
+    algorithms/base.py already computes atr_entry = atrs[i + 1] (line ~177),
+    i.e. the entry bar's own ATR, not the signal bar's.
+
+    Construction: signal fires at bar 10 (flat/low-vol run before it), entry
+    bar 11 has a deliberate wide asymmetric range (no downside breach) so its
+    own ATR spikes far above the signal bar's ATR. We then verify the actual
+    stop level realized by the engine matches a stop computed from the entry
+    bar's ATR (atrs[11]) and NOT from the signal bar's ATR (atrs[10]) — by
+    placing bar 12's low strictly between the two candidate stop levels
+    (breaches the signal-bar-ATR stop, does not breach the entry-bar-ATR
+    stop) and bar 13's low below both.
+    """
+    n = 20
+    opens  = np.full(n, 100.0)
+    highs  = np.full(n, 100.5)
+    lows   = np.full(n, 99.5)
+    closes = np.full(n, 100.0)
+    vol    = np.full(n, 1000.0)
+
+    # Entry bar (11): wide asymmetric range spikes ATR without breaching downside.
+    opens[11], highs[11], lows[11], closes[11] = 100.0, 130.0, 99.0, 100.0
+    # Bar 12: low sits between the two candidate stops -> must NOT exit if
+    # the engine correctly uses the entry bar's (larger) ATR.
+    opens[12], highs[12], lows[12], closes[12] = 100.0, 101.0, 90.0, 95.0
+    # Bar 13: low breaches the entry-bar-ATR stop -> exit must happen here.
+    opens[13], highs[13], lows[13], closes[13] = 95.0, 96.0, 80.0, 85.0
+
+    idx = pd.date_range("2022-01-01", periods=n, freq="3h")
+    df = pd.DataFrame({"open": opens, "high": highs, "low": lows,
+                        "close": closes, "volume": vol}, index=idx)
+
+    # Independently compute what the two candidate stop levels would be.
+    atrs = ALGO._atr(df, length=2)
+    atr_stop = 1.0
+    entry_px_expected = opens[11]  # slippage_atr_frac=0.0 below
+    stop_using_entry_bar_atr  = entry_px_expected - atr_stop * atrs[11]
+    stop_using_signal_bar_atr = entry_px_expected - atr_stop * atrs[10]
+    assert stop_using_entry_bar_atr < stop_using_signal_bar_atr, \
+        "test construction error: entry-bar ATR must be larger than signal-bar ATR"
+
+    signals = pd.Series(0, index=df.index)
+    signals.iloc[10] = 1  # signal at bar 10 -> entry at bar 11 open
+
+    params = {"atr_stop": atr_stop, "atr_tp": 100.0, "atr_len": 2,
+              "kelly_frac": 0.25, "kelly_cap": 0.25, "exit_thresh": -0.5}
+    m = ALGO._simulate(df, signals, params,
+                        commission_pct=0.0, slippage_atr_frac=0.0,
+                        initial_equity=100_000.0)
+
+    assert m.trades, "Expected exactly one trade"
+    t = m.trades[0]
+    assert t["entry_bar"] == 11
+    assert t["entry_px"] == pytest.approx(entry_px_expected)
+    # If the bug (signal-bar ATR) were still present, this would have exited
+    # at bar 12 instead, since bar 12's low (90) breaches the tighter,
+    # signal-bar-ATR stop (99) but not the correct entry-bar-ATR stop (84).
+    assert t["exit_bar"] == 13, (
+        f"Expected exit at bar 13 (entry-bar ATR stop); got exit_bar={t['exit_bar']}. "
+        f"An exit at bar 12 would indicate the signal-bar ATR bug has regressed."
+    )
+    assert t["exit_reason"] == "sl_intrabar"
+    assert t["exit_px"] == pytest.approx(stop_using_entry_bar_atr)

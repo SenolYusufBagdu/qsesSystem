@@ -10,7 +10,7 @@ from .reporting.reporter import Reporter
 from .optimization.optimizer import Optimizer
 from .optimization.ranker import Ranker
 
-__version__ = "1.0.0"
+__version__ = "1.5.0"
 __all__ = [
     "BacktestEngine",
     "get_algorithm", "REGISTRY",

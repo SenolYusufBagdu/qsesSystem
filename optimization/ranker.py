@@ -79,9 +79,19 @@ class Ranker:
             return None
 
         markets_tested = len(set(r.market for r in group))
-        markets_passed = sum(1 for r in group
-                             if r.metrics.is_valid()
-                             and not self._fails_hard_filter(r.metrics))
+        # RCA-8 fix: markets_passed must count DISTINCT markets with at least
+        # one valid, hard-filter-passing combo -- not the raw number of
+        # passing (market, timeframe, period) rows. Each market contributes
+        # up to 4 rows (2 timeframes x 2 periods), so counting rows let
+        # pass_ratio = markets_passed / markets_tested exceed 1.0 and let a
+        # config that succeeded on a single market (across its 4 combos)
+        # look identical to one that succeeded across many markets. That
+        # defeated the documented purpose of this gate: "Sadece 1 piyasada
+        # basarili, digerlerinde basarisiz -> elenir."
+        markets_passed = len(set(
+            r.market for r in group
+            if r.metrics.is_valid() and not self._fails_hard_filter(r.metrics)
+        ))
 
         avg_sharpe  = float(np.mean(sharpes))
         avg_wr      = float(np.mean(win_rates))
