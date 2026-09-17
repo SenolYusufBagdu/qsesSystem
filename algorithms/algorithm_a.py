@@ -222,9 +222,17 @@ class AlgorithmA(BaseAlgorithm):
             "thresh_lv_mult":  ("float",  0.5, 1.0,  0.05),
             "ofi_hv_min":      ("float",  0.2, 0.8,  0.05),
             "ofi_nrm_min":     ("float",  0.1, 0.5,  0.05),
-            "ofi_lv_min":      ("float",  0.05,0.3,  0.05),
-            "exit_thresh":     ("float",  -1.5, 0.0, 0.1),
-            "atr_stop":        ("float",  1.0, 4.0,  0.25),
+            # RCA-9: widened 0.3 -> 0.4 so NQ1!'s TV-verified seed (ofi_lv_min=0.35,
+            # real broker tick data) falls inside the search space instead of being
+            # silently out-of-bounds (see TV_REFERENCE_SEEDS below).
+            "ofi_lv_min":      ("float",  0.05,0.4,  0.05),
+            # RCA-9: widened -1.5 -> -2.0 so XU100's (-1.7) and XAUUSD's (-1.8)
+            # TV-verified seeds fall inside the search space.
+            "exit_thresh":     ("float",  -2.0, 0.0, 0.1),
+            # RCA-9: widened 4.0 -> 5.5 so XAUUSD's TV-verified seed (atr_stop=5.0)
+            # falls inside the search space, with a little headroom for local
+            # refinement to search around it.
+            "atr_stop":        ("float",  1.0, 5.5,  0.25),
             "atr_tp":          ("float",  1.5, 6.0,  0.25),
             "kelly_frac":      ("float",  0.1, 0.5,  0.05),
             "garch_alpha":     ("float",  0.05,0.30, 0.05),
@@ -300,7 +308,20 @@ class AlgorithmA(BaseAlgorithm):
             opt2_enable=True,
             opt3_enable=True, exit_thresh=-1.80,
             opt4_enable=True,
-            atr_stop=5.0, atr_tp=10.0,
+            # RCA-9: original Pine/TV value was atr_tp=10.0, which sits outside
+            # default_param_space()'s declared bounds (1.5-6.0). The optimizer's
+            # trial-0 seed injection does not validate against param_space, so this
+            # ran uncapped -- and _refine()'s neighbour step then clamped BOTH
+            # neighbours (10.0-0.25, 10.0+0.25) to the same boundary value (6.0),
+            # meaning local refinement could never actually search away from it.
+            # This is very likely why real-data XAUUSD 4h showed avg_hold=84-124
+            # bars: the "optimized" result was actually the raw, unrefined,
+            # out-of-bounds seed. research_journal.md had already independently
+            # concluded "Python-optimal deger 3-5xATR" from observing this same
+            # symptom; 5.0 is chosen here (top of that range, equal to atr_stop
+            # for a clean 1:1 R:R, comfortably inside the declared [1.5, 6.0]
+            # bounds so real search/refinement can now actually happen around it).
+            atr_stop=5.0, atr_tp=5.0,
             kelly_frac=0.30,
             # vwap_dev: Pine uses session-reset VWAP (price always near it).
             # Python rolling VWAP drifts in trends -> set wider to replicate Pine behavior.

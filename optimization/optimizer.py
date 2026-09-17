@@ -142,6 +142,12 @@ class Optimizer:
             val = best_params.get(key)
             if val is None:
                 continue
+            # RCA-9 defense-in-depth: if val somehow sits outside [spec[1], spec[2]]
+            # (e.g. a future TV seed that isn't caught by
+            # tests/test_seed_param_bounds.py), clamp it first. Without this,
+            # both neighbours below would clamp to the SAME boundary value and
+            # local refinement would silently do nothing.
+            val = max(spec[1], min(spec[2], val))
             step      = spec[3] if kind == "float" else 1
             neighbours= [val - step, val + step]
             for nval in neighbours:

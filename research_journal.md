@@ -257,3 +257,66 @@ komutuyla çalıştırılmalı.
   değiştirebilirdi (bkz. test senaryosu #1).
 - **Remaining Difference:** Yok — fix tam kapsamlı, tüm test paketi
   (26 test) PASS.
+
+---
+
+## RCA-9: TV Reference Seed'leri Kendi Parametre Uzaylarının Dışında
+
+- **Issue:** "Neler eksik, sırayla düzeltelim" gözden geçirmesi sırasında,
+  `AlgorithmA::TV_REFERENCE_SEEDS`'teki (gerçek broker tick verisiyle
+  TradingView'de doğrulanmış) parametrelerin `default_param_space()`'in
+  kendi ilan ettiği sınırların DIŞINDA olduğu bulundu — 3 marketin
+  ÜÇÜ de etkileniyor, sadece XAUUSD değil:
+  - NQ1!: `ofi_lv_min=0.35` vs ilan edilen `[0.05, 0.30]`
+  - XU100: `exit_thresh=-1.7` vs ilan edilen `[-1.5, 0.0]`
+  - XAUUSD: `exit_thresh=-1.8` vs `[-1.5, 0.0]`, `atr_stop=5.0` vs
+    `[1.0, 4.0]`, `atr_tp=10.0` vs `[1.5, 6.0]` (en kötüsü)
+- **Symptoms:** Açık teknik borç listesindeki "XAUUSD atr_tp: 10×ATR
+  Python simülatöründe avg_hold=124 bar → walk-forward test
+  pencerelerinde kapanmıyor" bulgusu artık açıklanabiliyor.
+- **Evidence:** `optimizer.py::optimize()` Stage 0 (seed injection) seed'i
+  hiçbir sınır kontrolünden geçirmeden direkt çalıştırıyor
+  (`self.algo.run(df, seed_params)`). Daha da kötüsü,
+  `optimizer.py::_refine()` komşu adımını
+  `neighbours = [val - step, val + step]` ile seed'in KENDİ (sınır dışı)
+  değerinden hesaplıyor, sonra her komşuyu AYRI AYRI `[lo, hi]`'a
+  kırpıyordu — XAUUSD'de `10.0±0.25` → ikisi de `6.0`'a kırpılıyor,
+  yani local refinement matematiksel olarak asla farklı bir noktayı
+  deneyemiyordu (`nval` her iki komşuda da aynı sınır değeri).
+- **Root Cause:** Seed değerleri Pine/TradingView tarafında doğrulanmış,
+  ama Python tarafındaki `default_param_space()` sınırlarıyla hiç
+  çapraz kontrol edilmemiş. Optimizer de bunu varsaymadan direkt kabul
+  ediyor.
+- **Impact:** XAUUSD'nin gerçek koşumdaki "optimize edilmiş" sonucu
+  büyük ihtimalle hiç arama yapılmamış, ham (sınır dışı) seed'in
+  kendisiydi — `research_journal.md`'nin daha önce bağımsız olarak
+  vardığı "Python-optimal değer 3-5×ATR" sonucu bunu doğruluyor. NQ1!
+  ve XU100'deki daha küçük sapmalar da benzer şekilde (daha hafif)
+  etkileniyor olabilir.
+- **Fix:**
+  1. `default_param_space()`'te 3 sınır genişletildi (`ofi_lv_min`
+     0.3→0.4, `exit_thresh` -1.5→-2.0, `atr_stop` 4.0→5.5) — bunlar
+     gerçek, TV-doğrulanmış değerler olduğu için sınır genişletildi,
+     seed değiştirilmedi.
+  2. XAUUSD `atr_tp` seed değeri 10.0→5.0 — burada tam tersi yapıldı
+     (sınır genişletilmedi, seed düzeltildi), çünkü proje zaten bu konuda
+     bağımsız bir araştırma sonucuna varmıştı (3-5×ATR).
+  3. `optimizer.py::_refine()`'e savunma katmanı: başlangıç değeri artık
+     komşular hesaplanmadan ÖNCE `[lo, hi]`'a kırpılıyor — gelecekte
+     başka bir algoritma/market için benzer bir sınır-dışı seed testten
+     kaçarsa bile, local refinement sessizce no-op olmayacak.
+- **Validation:** `tests/test_seed_param_bounds.py` — 3 yeni test:
+  (1) sistemik guard — REGISTRY'deki her algoritmanın her seed'ini kendi
+  `default_param_space()`'ine karşı kontrol ediyor (bu tek test, 5
+  ihlalin 5'ini de günün birinde yakalayacaktı), (2) XAUUSD `atr_tp`'nin
+  spesifik olarak 5.0'a düzeltildiğini ve 10.0 olmadığını doğruluyor,
+  (3) `_refine()`'in savunma kırpmasını sahte bir algoritma ve kasıtlı
+  sınır-dışı başlangıç değeriyle kanıtlıyor (fix olmadan iki komşu da
+  aynı sınıra kırpılıp arama hiç ilerlemezdi; fix ile gerçek, farklı bir
+  komşu bulunup kullanılıyor).
+- **Remaining Difference:** Bu fix'in gerçek sonuçlara etkisi henüz
+  gerçek veriyle ölçülmedi — Faz 7'nin (SP500/USOIL/EURUSD walk-forward)
+  yanı sıra, **tam 288 kombinasyonluk standart backtest de bu fix'ten
+  sonra yeniden çalıştırılmalı**, özellikle XAUUSD sonuçlarının nasıl
+  değiştiğini görmek için. Regression: tüm test paketi 26→29 teste
+  çıktı, hepsi PASS.
